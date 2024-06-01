@@ -1,6 +1,75 @@
 use num_traits::{Zero, One};
 use std::ops::{Add, Mul, MulAssign, AddAssign};
 
+#[allow(clippy::exhaustive_enums)]
+pub enum Layout {
+    ColMajor,
+    RowMajor,
+}
+
+#[allow(clippy::exhaustive_enums)]
+pub enum Op {
+    NoOp,
+    Transpose,
+    Hermitian,
+}
+
+
+/// ``gemm`` computes a scalar-matrix-matrix product and adds the result to a scalar-matrix product, with general matrices.
+///
+/// This operation is defined as:
+///
+///    ``C <- alpha * op(A) * op(B) + beta * C``
+///
+/// Where:
+///
+/// * ``op`` is one of noop, transpose or hermitian.
+/// * ``A``, ``B``, ``C`` are matrices
+/// * ``alpha``, ``beta`` are scalars
+#[allow(clippy::min_ident_chars)]
+#[allow(clippy::too_many_arguments)]
+pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [T], lda: usize, b: &[T], ldb: usize, beta: &T, c: &mut [T], ldc: usize)
+    where
+        T: Mul<Output=T> + MulAssign + Add<Output=T> + AddAssign + 'a + Zero + One + PartialEq + Copy,
+        &'a T: Mul<Output=T> + Add<Output=T>,
+{
+    match layout {
+        Layout::ColMajor => {}
+        Layout::RowMajor => { unimplemented!() }
+    }
+
+    if a.is_empty() || b.is_empty() || c.is_empty() {
+        // Early return, we can do no work here.
+        return;
+    }
+
+    // Early return, alpha == zero => we can avoid the matrix multiply step
+    if *alpha == T::zero() {
+        if *beta == T::zero() {
+            for ci in c {
+                *ci = T::zero();
+            }
+        } else if *beta != T::one() {
+            for ci in c {
+                *ci *= *beta;
+            }
+        }
+        return;
+    }
+
+    match (op_a, op_b) {
+        (Op::NoOp, Op::NoOp) => { unimplemented!() }
+        (Op::NoOp, Op::Transpose) => { unimplemented!() }
+        (Op::NoOp, Op::Hermitian) => { unimplemented!() }
+        (Op::Transpose, Op::NoOp) => { unimplemented!() }
+        (Op::Transpose, Op::Transpose) => { unimplemented!() }
+        (Op::Transpose, Op::Hermitian) => { unimplemented!() }
+        (Op::Hermitian, Op::NoOp) => { unimplemented!() }
+        (Op::Hermitian, Op::Transpose) => { unimplemented!() }
+        (Op::Hermitian, Op::Hermitian) => { unimplemented!() }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -13,7 +82,7 @@ mod tests {
             &'a T: Mul<Output=T> + Add<Output=T>,
     {
         if *beta != T::one() {
-            for ci in &mut  *c {
+            for ci in &mut *c {
                 *ci *= *beta;
             }
         }
