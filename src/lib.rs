@@ -1,13 +1,13 @@
 use num_traits::{Zero, One};
 use std::ops::{Add, Mul, MulAssign, AddAssign};
 
-#[allow(clippy::exhaustive_enums)]
+#[non_exhaustive]
 pub enum Layout {
-    ColMajor,
+    ColumnMajor,
     RowMajor,
 }
 
-#[allow(clippy::exhaustive_enums)]
+#[non_exhaustive]
 pub enum Op {
     NoOp,
     Transpose,
@@ -15,26 +15,27 @@ pub enum Op {
 }
 
 
-/// ``gemm`` computes a scalar-matrix-matrix product and adds the result to a scalar-matrix product, with general matrices.
+/// ``gemm`` computes a scalar-matrix-matrix product and adds the result to a scalar-matrix product.
 ///
 /// This operation is defined as:
 ///
-///    ``C <- alpha * op(A) * op(B) + beta * C``
+///    ``C <- α * op(A) * op(B) + β * C``
 ///
 /// Where:
 ///
 /// * ``op`` is one of noop, transpose or hermitian.
 /// * ``A``, ``B``, ``C`` are matrices
-/// * ``alpha``, ``beta`` are scalars
+/// * ``α``, ``β`` are scalars
+/// * ``ldx`` is the leading dimension of matrix ``x``.
 #[allow(clippy::min_ident_chars)]
 #[allow(clippy::too_many_arguments)]
-pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [T], lda: usize, b: &[T], ldb: usize, beta: &T, c: &mut [T], ldc: usize)
+pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [T], lda: usize, b: &'a [T], ldb: usize, beta: &T, c: &mut [T], ldc: usize)
     where
         T: Mul<Output=T> + MulAssign + Add<Output=T> + AddAssign + 'a + Zero + One + PartialEq + Copy,
         &'a T: Mul<Output=T> + Add<Output=T>,
 {
     match layout {
-        Layout::ColMajor => {}
+        Layout::ColumnMajor => {}
         Layout::RowMajor => { unimplemented!() }
     }
 
@@ -44,12 +45,12 @@ pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [
     }
 
     // Early return, alpha == zero => we can avoid the matrix multiply step
-    if *alpha == T::zero() {
-        if *beta == T::zero() {
+    if T::is_zero(alpha) {
+        if T::is_zero(beta) {
             for ci in c {
                 *ci = T::zero();
             }
-        } else if *beta != T::one() {
+        } else if T::is_one(beta) {
             for ci in c {
                 *ci *= *beta;
             }
@@ -58,7 +59,7 @@ pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [
     }
 
     match (op_a, op_b) {
-        (Op::NoOp, Op::NoOp) => { unimplemented!() }
+        (Op::NoOp, Op::NoOp) => { gemm_noop_noop(alpha, a, lda, b, ldb, beta, c, ldc) }
         (Op::NoOp, Op::Transpose) => { unimplemented!() }
         (Op::NoOp, Op::Hermitian) => { unimplemented!() }
         (Op::Transpose, Op::NoOp) => { unimplemented!() }
@@ -70,42 +71,43 @@ pub fn gemm<'a, T>(layout: &Layout, op_a: &Op, op_b: &Op, alpha: &'a T, a: &'a [
     }
 }
 
+#[allow(clippy::min_ident_chars)]
+#[allow(clippy::too_many_arguments)]
+fn gemm_noop_noop<'a, T>(alpha: &'a T, a: &'a [T], lda: usize, b: &'a [T], ldb: usize, beta: &T, c: &mut [T], ldc: usize)
+    where
+        T: Mul<Output=T> + MulAssign + Add<Output=T> + AddAssign + Copy,
+        &'a T: Mul<Output=T> + Add<Output=T>,
+{
+    for ci in &mut *c {
+        *ci *= *beta;
+    }
+
+    for (cj, bk) in c.chunks_exact_mut(ldc).zip(b.chunks_exact(ldb)) {
+        for (bkj, ai) in bk.iter().zip(a.chunks_exact(lda)) {
+            let alpha_bkj = alpha * bkj;
+            for (cij, aik) in cj.iter_mut().zip(ai.iter()) {
+                *cij += *aik * alpha_bkj;
+            }
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Naive implementation of ``gemm`` to use for testing.
-    fn gemm_naive<'a, T>(alpha: &'a T, a: &'a [T], lda: usize, b: &[T], ldb: usize, beta: &T, c: &mut [T], ldc: usize)
-        where
-            T: Mul<Output=T> + MulAssign + Add<Output=T> + AddAssign + Copy + One + PartialEq,
-            &'a T: Mul<Output=T> + Add<Output=T>,
-    {
-        if *beta != T::one() {
-            for ci in &mut *c {
-                *ci *= *beta;
-            }
-        }
-
-        for (ci, ai) in c.chunks_exact_mut(ldc).zip(a.chunks_exact(lda)) {
-            for (aik, bk) in ai.iter().zip(b.chunks_exact(ldb)) {
-                for (cij, bkj) in ci.iter_mut().zip(bk.iter()) {
-                    *cij += alpha * aik * (*bkj);
-                }
-            }
-        }
-    }
-
     #[test]
-    fn test_simple_example() {
-        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let lda = 3;
-        let b = vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let ldb = 2;
+    fn test_noop_noop_col_major() {
+        // All matrices in column major storage
+        let a = vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
+        let lda = 2;
+        let b = vec![7.0, 9.0, 11.0, 8.0, 10.0, 12.0];
+        let ldb = 3;
         let mut c = vec![1.0, 1.0, 1.0, 1.0];
         let ldc = 2;
-        let c_expected = vec![59.0, 65.0, 140.0, 155.0];
-        gemm_naive(&1.0, &a, lda, &b, ldb, &1.0, &mut c, ldc);
+        let c_expected = vec![59.0, 140.0, 65.0, 155.0];
+        gemm(&Layout::ColumnMajor, &Op::NoOp, &Op::NoOp, &1.0, &a, lda, &b, ldb, &1.0, &mut c, ldc);
         assert_eq!(c, c_expected);
     }
 }
